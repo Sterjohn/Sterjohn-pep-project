@@ -279,3 +279,5 @@ public class SocialMediaController {
 /*Woohoo! That was no joke. Please let me know what changes I may need to make. Thanks!*/
 
 /*Welp. RevPro isn't recognizing any of my commits. This really sucks. */
+
+/*"You cannot submit the project without committing the progress done in the project. Please commit the recent changes in your code editor platform." I'm legit gonna cry if I can't submit this ugh. */
