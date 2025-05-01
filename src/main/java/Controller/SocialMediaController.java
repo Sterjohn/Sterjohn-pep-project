@@ -4,13 +4,21 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import Model.Account;
 import Model.Message;
-import Util.ConnectionUtil;
-import java.sql.*;
-import java.util.ArrayList;
+import Service.SocialMediaService;
+
 import java.util.List;
 
+/**
+ * Handles routing for account and message features.
+ * Business logic is handled in the service layer.
+ */
 public class SocialMediaController {
 
+    private SocialMediaService service = new SocialMediaService();
+
+    /**
+     * Sets up and returns the Javalin app with all routes.
+     */
     public Javalin startAPI() {
         Javalin app = Javalin.create();
         app.get("example-endpoint", this::exampleHandler);
@@ -29,249 +37,120 @@ public class SocialMediaController {
         context.json("sample text");
     }
 
+    /**
+     * Handles user signup. Rejects short passwords or blank usernames.
+     */
     private void registerHandler(Context ctx) {
         Account newAccount = ctx.bodyAsClass(Account.class);
 
-        if (newAccount.getUsername() == null || newAccount.getUsername().isBlank()
-                || newAccount.getPassword() == null || newAccount.getPassword().length() < 4) {
+        if (!service.isValidAccount(newAccount) || service.isUsernameTaken(newAccount.getUsername())) {
             ctx.status(400);
             return;
         }
 
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String checkSql = "SELECT * FROM account WHERE username = ?";
-            PreparedStatement checkStmt = conn.prepareStatement(checkSql);
-            checkStmt.setString(1, newAccount.getUsername());
-            ResultSet rs = checkStmt.executeQuery();
-            if (rs.next()) {
-                ctx.status(400);
-                return;
-            }
-
-            String insertSql = "INSERT INTO account (username, password) VALUES (?, ?)";
-            PreparedStatement insertStmt = conn.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS);
-            insertStmt.setString(1, newAccount.getUsername());
-            insertStmt.setString(2, newAccount.getPassword());
-            insertStmt.executeUpdate();
-
-            ResultSet keys = insertStmt.getGeneratedKeys();
-            if (keys.next()) {
-                int id = keys.getInt(1);
-                Account createdAccount = new Account(id, newAccount.getUsername(), newAccount.getPassword());
-                ctx.json(createdAccount);
-            } else {
-                ctx.status(500);
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
+        Account registeredAccount = service.registerAccount(newAccount);
+        if (registeredAccount != null) {
+            ctx.status(200);
+            ctx.json(registeredAccount);
+        } else {
             ctx.status(500);
         }
     }
 
+    /**
+     * Logs in the user if credentials match a record.
+     */
     private void loginHandler(Context ctx) {
         Account loginAttempt = ctx.bodyAsClass(Account.class);
+        Account result = service.login(loginAttempt.getUsername(), loginAttempt.getPassword());
 
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String sql = "SELECT * FROM account WHERE username = ?";
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setString(1, loginAttempt.getUsername());
-            ResultSet rs = stmt.executeQuery();
-
-            if (rs.next()) {
-                String storedPassword = rs.getString("password");
-                if (storedPassword.equals(loginAttempt.getPassword())) {
-                    int id = rs.getInt("account_id");
-                    Account authenticated = new Account(id, loginAttempt.getUsername(), storedPassword);
-                    ctx.json(authenticated);
-                    return;
-                }
-            }
+        if (result != null) {
+            ctx.status(200);
+            ctx.json(result);
+        } else {
             ctx.status(401);
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
         }
     }
 
+    /**
+     * Creates a new message if it passes validation.
+     */
     private void createMessageHandler(Context ctx) {
         Message newMessage = ctx.bodyAsClass(Message.class);
+        Message created = service.createMessage(newMessage);
 
-        if (newMessage.getMessage_text() == null || newMessage.getMessage_text().isBlank()
-                || newMessage.getMessage_text().length() > 255) {
+        if (created != null) {
+            ctx.status(200);
+            ctx.json(created);
+        } else {
             ctx.status(400);
-            return;
-        }
-
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String userCheckSql = "SELECT * FROM account WHERE account_id = ?";
-            PreparedStatement userCheckStmt = conn.prepareStatement(userCheckSql);
-            userCheckStmt.setInt(1, newMessage.getPosted_by());
-            ResultSet userRs = userCheckStmt.executeQuery();
-            if (!userRs.next()) {
-                ctx.status(400);
-                return;
-            }
-
-            String insertSql = "INSERT INTO message (posted_by, message_text, time_posted_epoch) VALUES (?, ?, ?)";
-            PreparedStatement stmt = conn.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS);
-            stmt.setInt(1, newMessage.getPosted_by());
-            stmt.setString(2, newMessage.getMessage_text());
-            stmt.setLong(3, newMessage.getTime_posted_epoch());
-            stmt.executeUpdate();
-
-            ResultSet keys = stmt.getGeneratedKeys();
-            if (keys.next()) {
-                int messageId = keys.getInt(1);
-                Message created = new Message(messageId, newMessage.getPosted_by(), newMessage.getMessage_text(), newMessage.getTime_posted_epoch());
-                ctx.json(created);
-            } else {
-                ctx.status(500);
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
         }
     }
 
+    /**
+     * Returns all messages in the database.
+     */
     private void getAllMessagesHandler(Context ctx) {
-        List<Message> messages = new ArrayList<>();
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String sql = "SELECT * FROM message";
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            ResultSet rs = stmt.executeQuery();
-
-            while (rs.next()) {
-                Message m = new Message(
-                    rs.getInt("message_id"),
-                    rs.getInt("posted_by"),
-                    rs.getString("message_text"),
-                    rs.getLong("time_posted_epoch")
-                );
-                messages.add(m);
-            }
-            ctx.json(messages);
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
-        }
+        List<Message> messages = service.getAllMessages();
+        ctx.status(200);
+        ctx.json(messages);
     }
 
+    /**
+     * Returns all messages posted by a given user.
+     */
     private void getMessagesByUserHandler(Context ctx) {
         int userId = Integer.parseInt(ctx.pathParam("user_id"));
-        List<Message> messages = new ArrayList<>();
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String sql = "SELECT * FROM message WHERE posted_by = ?";
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setInt(1, userId);
-            ResultSet rs = stmt.executeQuery();
-
-            while (rs.next()) {
-                Message m = new Message(
-                    rs.getInt("message_id"),
-                    rs.getInt("posted_by"),
-                    rs.getString("message_text"),
-                    rs.getLong("time_posted_epoch")
-                );
-                messages.add(m);
-            }
-            ctx.json(messages);
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
-        }
+        List<Message> messages = service.getMessagesByUser(userId);
+        ctx.status(200);
+        ctx.json(messages);
     }
 
+    /**
+     * Gets a message by its ID. Sends 200 even if not found (test requirement).
+     */
     private void getMessageByIdHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String sql = "SELECT * FROM message WHERE message_id = ?";
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setInt(1, messageId);
-            ResultSet rs = stmt.executeQuery();
-            if (rs.next()) {
-                Message m = new Message(
-                    rs.getInt("message_id"),
-                    rs.getInt("posted_by"),
-                    rs.getString("message_text"),
-                    rs.getLong("time_posted_epoch")
-                );
-                ctx.json(m);
-            } else {
-                ctx.result("");
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
+        Message message = service.getMessageById(messageId);
+
+        if (message != null) {
+            ctx.status(200);
+            ctx.json(message);
+        } else {
+            ctx.status(200); // Required by test: return 200 with no body
         }
     }
 
+    /**
+     * Updates message text if the new text is valid.
+     */
     private void updateMessageHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
-        Message updated = ctx.bodyAsClass(Message.class);
-        String newText = updated.getMessage_text();
+        Message incoming = ctx.bodyAsClass(Message.class);
+        Message updated = service.updateMessageText(messageId, incoming.getMessage_text());
 
-        if (newText == null || newText.isBlank() || newText.length() > 255) {
+        if (updated != null) {
+            ctx.status(200);
+            ctx.json(updated);
+        } else {
             ctx.status(400);
-            return;
-        }
-
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String checkSql = "SELECT * FROM message WHERE message_id = ?";
-            PreparedStatement checkStmt = conn.prepareStatement(checkSql);
-            checkStmt.setInt(1, messageId);
-            ResultSet rs = checkStmt.executeQuery();
-
-            if (!rs.next()) {
-                ctx.status(400);
-                return;
-            }
-
-            int postedBy = rs.getInt("posted_by");
-            long timestamp = rs.getLong("time_posted_epoch");
-
-            String updateSql = "UPDATE message SET message_text = ? WHERE message_id = ?";
-            PreparedStatement updateStmt = conn.prepareStatement(updateSql);
-            updateStmt.setString(1, newText);
-            updateStmt.setInt(2, messageId);
-            updateStmt.executeUpdate();
-
-            Message response = new Message(messageId, postedBy, newText, timestamp);
-            ctx.json(response);
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
         }
     }
 
+    /**
+     * Deletes a message and returns the deleted object.
+     * If it didn’t exist, still return 200 (per test spec).
+     */
     private void deleteMessageHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
+        Message toDelete = service.getMessageById(messageId);
 
-        try (Connection conn = ConnectionUtil.getConnection()) {
-            String sql = "SELECT * FROM message WHERE message_id = ?";
-            PreparedStatement stmt = conn.prepareStatement(sql);
-            stmt.setInt(1, messageId);
-            ResultSet rs = stmt.executeQuery();
-
-            if (rs.next()) {
-                Message m = new Message(
-                    rs.getInt("message_id"),
-                    rs.getInt("posted_by"),
-                    rs.getString("message_text"),
-                    rs.getLong("time_posted_epoch")
-                );
-
-                String deleteSql = "DELETE FROM message WHERE message_id = ?";
-                PreparedStatement delStmt = conn.prepareStatement(deleteSql);
-                delStmt.setInt(1, messageId);
-                delStmt.executeUpdate();
-
-                ctx.json(m);
-            } else {
-                ctx.result("");
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-            ctx.status(500);
+        if (toDelete != null) {
+            service.deleteMessageById(messageId);
+            ctx.status(200);
+            ctx.json(toDelete);
+        } else {
+            ctx.status(200); // Required by test: return 200 with no body
         }
     }
-}  
+}
