@@ -4,24 +4,18 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import Model.Account;
 import Model.Message;
-import Service.SocialMediaService;
+import Service.AccountService;
+import Service.MessageService;
 
 import java.util.List;
 
-/**
- * Handles routing for account and message features.
- * Business logic is handled in the service layer.
- */
 public class SocialMediaController {
 
-    private SocialMediaService service = new SocialMediaService();
+    private AccountService accountService = new AccountService();
+    private MessageService messageService = new MessageService();
 
-    /**
-     * Sets up and returns the Javalin app with all routes.
-     */
     public Javalin startAPI() {
         Javalin app = Javalin.create();
-        app.get("example-endpoint", this::exampleHandler);
         app.post("/register", this::registerHandler);
         app.post("/login", this::loginHandler);
         app.post("/messages", this::createMessageHandler);
@@ -33,22 +27,16 @@ public class SocialMediaController {
         return app;
     }
 
-    private void exampleHandler(Context context) {
-        context.json("sample text");
-    }
-
     /**
-     * Handles user signup. Rejects short passwords or blank usernames.
+     * Updated to handle blank username and short password
      */
     private void registerHandler(Context ctx) {
         Account newAccount = ctx.bodyAsClass(Account.class);
-
-        if (!service.isValidAccount(newAccount) || service.isUsernameTaken(newAccount.getUsername())) {
+        if (!accountService.isValidAccount(newAccount) || accountService.isUsernameTaken(newAccount.getUsername())) {
             ctx.status(400);
             return;
         }
-
-        Account registeredAccount = service.registerAccount(newAccount);
+        Account registeredAccount = accountService.registerAccount(newAccount);
         if (registeredAccount != null) {
             ctx.status(200);
             ctx.json(registeredAccount);
@@ -58,103 +46,97 @@ public class SocialMediaController {
     }
 
     /**
-     * Logs in the user if credentials match a record.
+     * Updated to use AccountService for login verification
      */
     private void loginHandler(Context ctx) {
         Account loginAttempt = ctx.bodyAsClass(Account.class);
-        Account result = service.login(loginAttempt.getUsername(), loginAttempt.getPassword());
-
-        if (result != null) {
+        Account account = accountService.login(loginAttempt.getUsername(), loginAttempt.getPassword());
+        if (account != null) {
             ctx.status(200);
-            ctx.json(result);
+            ctx.json(account);
         } else {
             ctx.status(401);
         }
     }
 
     /**
-     * Creates a new message if it passes validation.
+     * Updated to return 400 with empty body on validation failure
      */
     private void createMessageHandler(Context ctx) {
-        Message newMessage = ctx.bodyAsClass(Message.class);
-        Message created = service.createMessage(newMessage);
-
-        if (created != null) {
+        Message message = ctx.bodyAsClass(Message.class);
+        Message createdMessage = messageService.createMessage(message);
+        if (createdMessage != null) {
             ctx.status(200);
-            ctx.json(created);
+            ctx.json(createdMessage);
         } else {
             ctx.status(400);
+            ctx.result("");
         }
     }
 
     /**
-     * Returns all messages in the database.
+     * Returns all messages with status 200
      */
     private void getAllMessagesHandler(Context ctx) {
-        List<Message> messages = service.getAllMessages();
+        List<Message> messages = messageService.getAllMessages();
         ctx.status(200);
         ctx.json(messages);
     }
 
     /**
-     * Returns all messages posted by a given user.
+     * Returns messages by user with status 200
      */
     private void getMessagesByUserHandler(Context ctx) {
         int userId = Integer.parseInt(ctx.pathParam("user_id"));
-        List<Message> messages = service.getMessagesByUser(userId);
+        List<Message> messages = messageService.getMessagesByUser(userId);
         ctx.status(200);
         ctx.json(messages);
     }
 
     /**
-     * Gets a message by its ID. Sends 200 even if not found (test requirement).
+     * Updated to return 200 and empty body if message not found
      */
     private void getMessageByIdHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
-        Message message = service.getMessageById(messageId);
-
+        Message message = messageService.getMessageById(messageId);
         if (message != null) {
             ctx.status(200);
             ctx.json(message);
         } else {
-            ctx.status(200); // Required by test: return 200 with no body
+            ctx.status(200);
+            ctx.result("");
         }
     }
 
     /**
-     * Updates message text if the new text is valid.
+     * Updated to return 400 and empty body if update fails
      */
     private void updateMessageHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
         Message incoming = ctx.bodyAsClass(Message.class);
-        Message updated = service.updateMessageText(messageId, incoming.getMessage_text());
-
+        Message updated = messageService.updateMessage(messageId, incoming.getMessage_text());
         if (updated != null) {
             ctx.status(200);
             ctx.json(updated);
         } else {
             ctx.status(400);
+            ctx.result("");
         }
     }
 
     /**
-     * Deletes a message and returns the deleted object.
-     * If it didn’t exist, still return 200 (per test spec).
+     * Updated to return deleted message JSON on success, empty body otherwise
      */
     private void deleteMessageHandler(Context ctx) {
         int messageId = Integer.parseInt(ctx.pathParam("message_id"));
-        Message toDelete = service.getMessageById(messageId);
+        Message deleted = messageService.getMessageById(messageId);
 
-        if (toDelete != null) {
-            service.deleteMessageById(messageId);
+        if (deleted != null && messageService.deleteMessage(messageId)) {
             ctx.status(200);
-            ctx.json(toDelete);
+            ctx.json(deleted);
         } else {
-            ctx.status(200); // Required by test: return 200 with no body
+            ctx.status(200);
+            ctx.result("");
         }
     }
 }
-
-/*Going to re-commit my code. Hopefully my instructor can see everything. I made a ton of changes and added a ton of comments, but they said nothing was changed. Hopefully it works this time. */
-
-/*Trying again. Praying this works. */
